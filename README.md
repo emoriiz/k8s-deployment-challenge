@@ -91,9 +91,14 @@ Bewertet wird:
 - Zugriff auf die ArgoCD Oberfäche mit Portforwarding_ `kubectl port-forward svc/argocd-server -n argocd 8080:443`
 - Passwort für die ArgoCD Oberfäche aus dem secret anzeigen (User ist `admin`): `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 --decode && echo ""`
 - ArgoCD Application in `argocd-app.yaml` definieren
+- Datei im Cluster anwenden: `kubectl apply -f argocd-app.yaml`
 
 ### Helm Chart
 -> Quellen: [Helm Chart erstellen](https://opensource.com/article/20/5/helm-charts)
 - Helm installieren (MacOS): `brew install helm`
 - Helm Chart Template anlegen: `helm create <name>`
 
+
+### GitHub Actions
+-> Quellen: [GitHub Actions Build and Push Docker Images Anleitung GitHub](https://docs.github.com/de/actions/tutorials/publish-packages/publish-docker-images), [GitHub Actions Build and Push Docker Images Anleitung Docker](https://docs.docker.com/guides/python/configure-github-actions/)
+- `yml` Datei für den Workflow in `.github/workflows` anlegen
