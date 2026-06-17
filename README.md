@@ -62,7 +62,7 @@ Bewertet wird:
 
 
 # Übersicht Aufgabenlösungen
-In diesem Abschnitt werden wird die Lösung zu den Aufgabenpaketen angeben, im Abschnitt [Einzelne Einrichtungs- und Installationsschritte](#Einzelne-Einrichtungs--undInstallationsschritte) sind die genauen teschnischen Schritte und Befehle aufgeführt
+In diesem Abschnitt werden die Lösungen zu den Aufgabenpaketen angeben, im Abschnitt [Einzelne Einrichtungs- und Installationsschritte](#Einzelne-Einrichtungs-undInstallationsschritte) sind die genauen teschnischen Schritte und Befehle aufgeführt.
 
 ## Aufgabenpaket 1 (Build und Ausführung)
 
@@ -79,57 +79,174 @@ In diesem Abschnitt werden wird die Lösung zu den Aufgabenpaketen angeben, im A
 ## Aufgabenpaket 2 (Deployment-Umsetzung)
 
 ### Architektur
-TODO
-
+- Lokales Single Node Kubernetes Cluster über Docker Desktop
+- Flask App als Docker Container
+- Images werden in der GHCR (GitHub Container Registry) gespeichert
+- Helm Chart im Ordner `deployment/` definiert alle Kubernetes Ressourcen
+- ArgoCD läuft im Cluster im Namespace `argocd` und überwacht das GitHub Repository auf Änderungen im `deployment/` Ordner
+- GitHub Actions Pipeline übernimmt den CI-Part: Image bauen, in GHCR pushen, Image Tag in `values.yaml` aktualisieren
 
 ### Deployment-Prozess
 1. Code wird in GitHub gepusht
 2. GitHub Actions baut ein Docker Image und pusht es in die Registry (GHCR)
 3. Die Pipeline aktualisiert den Image Tag im Helm Chart
 4. Die Änderung wird ins Repository committed
-5. ArgoCD erkennt die Änderung und deployed automatisch das neue Image ins Kubernetes Cluster
+5. ArgoCD erkennt die Änderung und deployed automatisch das neue Image in den Namespace `flask-app` im Kubernetes Cluster
 
-### Überprüfung des Deployments (TODO)
-- kubectl get pods → Status der Pods prüfen
-- kubectl logs <pod> → Logs analysieren
-- Zugriff auf den Health-Endpoint (/healthz)
+### Überprüfung des Deployments
+- `kubectl get pods -n flask-app` -> Status der Pods prüfen
+- `kubectl logs <pod> -n flask-app` -> Logs analysieren
+- `kubectl describe deployment flask-app -n flask-app` -> Analyse des Deployments
+- `kubectl port-forward svc/flask-app 5000:5000 -n flask-app` → Zugriff auf den Health-Endpoint unter `http://127.0.0.1:5000/healthz`
 - ArgoCD UI: Status "Synced" und "Healthy"
-
 
 
 ## Aufgabenpaket 3 (Fehleranalyse und Betriebsfaehigkeit)
 
-TODO
+### Fehlerfall: Falsch konfigurierte Liveness Probe
+**Szenario:** Der Pfad der Liveness Probe in `deployment/values.yaml` zeigt auf einen nicht existierenden Endpunkt -> Kubernetes markiert den Pod wiederholt als unhealthy und startet ihn neu
+
+**Simulation:**
+- `livenessProbe.httpGet.path` in `deployment/values.yaml` auf `/wrong` setzen und committen
+- Pipeline läuft durch, ArgoCD synct die Änderung ins Cluster
+- Kubernetes ruft periodisch `/wrong` auf -> 404 -> Pod wird als unhealthy eingestuft und neugestartet
+
+**Diagnose:**
+- `kubectl get pods -n flask-app` -> Zunächst läuft der Pod, aber er startet immer wieder neu (siehe **Verhalten des Pods im Namespace `flask-app`**)
+- Nach 5 Neustarts wechselt der Status zu `CrashLoopBackOff`
+- Wechselt zwischenzeitlich immer wieder in den Zustand `Running`, währenddessen ist die Flask Anwendung auch erreichbar
+- Mit `kubectl logs <pod> -n flask-app` sieht man, dass beim `livenessProbe` Endpoint der Fehler `404` zurückkommt, da `/wrong` nicht als Endpoint in der Flask App existiert (siehe **Pod Logs**)
+- In der ArgoCD UI kommt ebenfalls eine Fehlermeldung:
+    ```
+    Container is waiting because of CrashLoopBackOff. It is not started and not ready.
+    The container last terminated 4 minutes ago with exit code 137 because of Error.
+    ```
+
+**Verhalten des Pods im Namespace `flask-app`:**
+```
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app                      
+NAME                         READY   STATUS        RESTARTS      AGE
+flask-app-644c77968b-8n77x   1/1     Running       0             20s
+flask-app-8975ddb87-ts4st    1/1     Terminating   1 (98m ago)   2d1h
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app
+NAME                         READY   STATUS    RESTARTS   AGE
+flask-app-644c77968b-8n77x   1/1     Running   0          46s
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app
+NAME                         READY   STATUS    RESTARTS      AGE
+flask-app-644c77968b-8n77x   1/1     Running   1 (55s ago)   115s
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app
+NAME                         READY   STATUS    RESTARTS      AGE
+flask-app-644c77968b-8n77x   1/1     Running   2 (37s ago)   2m37s
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app
+NAME                         READY   STATUS    RESTARTS      AGE
+flask-app-644c77968b-8n77x   1/1     Running   3 (33s ago)   3m33s
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app
+NAME                         READY   STATUS             RESTARTS     AGE
+flask-app-644c77968b-8n77x   0/1     CrashLoopBackOff   5 (5s ago)   6m5s
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app
+NAME                         READY   STATUS    RESTARTS      AGE
+flask-app-644c77968b-8n77x   1/1     Running   6 (89s ago)   7m29s
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app
+NAME                         READY   STATUS    RESTARTS        AGE
+flask-app-644c77968b-8n77x   1/1     Running   6 (2m15s ago)   8m15s
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app
+NAME                         READY   STATUS             RESTARTS      AGE
+flask-app-644c77968b-8n77x   0/1     CrashLoopBackOff   6 (10s ago)   8m30s
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app
+NAME                         READY   STATUS             RESTARTS        AGE
+flask-app-644c77968b-8n77x   0/1     CrashLoopBackOff   7 (4m49s ago)   16m
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app
+NAME                         READY   STATUS    RESTARTS       AGE
+flask-app-644c77968b-8n77x   1/1     Running   8 (6m8s ago)   18m
+nico@macbook-pro-14 ~ % kubectl get pods -n flask-app
+NAME                         READY   STATUS             RESTARTS      AGE
+flask-app-644c77968b-8n77x   0/1     CrashLoopBackOff   9 (21s ago)   19m
+```
+
+**Pod Logs:**
+```
+nico@macbook-pro-14 ~ % kubectl logs flask-app-644c77968b-8n77x -n flask-app
+ * Serving Flask app 'app'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.244.0.13:5000
+Press CTRL+C to quit
+10.244.0.1 - - [17/Jun/2026 18:39:51] "GET /healthz HTTP/1.1" 200 -
+10.244.0.1 - - [17/Jun/2026 18:39:53] "GET /wrong HTTP/1.1" 404 -
+10.244.0.1 - - [17/Jun/2026 18:40:01] "GET /healthz HTTP/1.1" 200 -
+10.244.0.1 - - [17/Jun/2026 18:40:03] "GET /wrong HTTP/1.1" 404 -
+10.244.0.1 - - [17/Jun/2026 18:40:11] "GET /healthz HTTP/1.1" 200 -
+10.244.0.1 - - [17/Jun/2026 18:40:13] "GET /wrong HTTP/1.1" 404 -
+10.244.0.1 - - [17/Jun/2026 18:40:21] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [17/Jun/2026 18:40:30] "GET /healthz HTTP/1.1" 200 -
+10.244.0.1 - - [17/Jun/2026 18:40:31] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [17/Jun/2026 18:40:31] "GET /healthz HTTP/1.1" 200 -
+127.0.0.1 - - [17/Jun/2026 18:40:34] "GET / HTTP/1.1" 200 -
+10.244.0.1 - - [17/Jun/2026 18:40:41] "GET /healthz HTTP/1.1" 200 -
+```
+
+**Behebung:**
+- `livenessProbe.httpGet.path` in `deployment/values.yaml` auf `/healthz` zurücksetzen und committen
+- ArgoCD erkennt die Änderung automatisch und synced den korrekten Zustand zurück
+
 
 ## Aufgabenpaket 4 (Mini CI/CD-Teil)
 
 ### Helm Chart
+- Helm Chart Template mit `helm create deployment` erstellt
+- Template als Ausgangspunkt genommen und auf die Flask App angepasst:
+    - `image.repository` auf `ghcr.io/emoriiz/k8s-deployment-challenge` gesetzt
+    - `service.port` auf `5000` (Flask Standard) gesetzt
+    - `livenessProbe` und `readinessProbe` auf den `/healthz` Endpunkt konfiguriert
 
-### CI Teil (TODO)
-- Der CI Teil wird über eine GitHub Actions mit folgenden Pipelineschritten ausgeführt
-    - Checkout: 
-    - Set up Docker Buildx:
-    - Set up QEMU:
-    - Login to GitHub Container Registry:
-    - Build and push:
-    - Update image tag in values.yaml:
+### CI Teil
+- Der CI Teil wird über eine GitHub Actions Pipeline mit folgenden Schritten ausgeführt:
+    - **Checkout:** Repository Code auschecken
+    - **Set up Docker Buildx:** Multi Arch Builds (amd64 + arm64) ermöglichen
+    - **Set up QEMU:** ARM-Emulation für Cross Platform Builds
+    - **Login to GitHub Container Registry:** Authentifizierung an GHCR über automatisches `GITHUB_TOKEN`
+    - **Build and push:** Docker Image bauen und in GHCR pushen (für `linux/amd64` und `linux/arm64`)
+    - **Update image tag in values.yaml:** Commit SHA als neuen Image Tag in `deployment/values.yaml` schreiben und ins Repository pushen
 
 ### CD Teil
-TODO
+- ArgoCD per Helm im Cluster im Namespace `argocd` deployed
+- ArgoCD Application in `argocd-app.yaml` definiert und im Cluster angewendet
+- ArgoCD überwacht Branch `main` des GitHub Repositories und erkennt Änderungen im `deployment/` Ordner
+- Bei einer Änderung (z.B. neuer Image Tag in `values.yaml`) synced ArgoCD automatisch den neuen Zustand ins Cluster
 
 ### Versionierung
-TODO
+- Images werden mit dem vollständigen Git Commit SHA getaggt
+- Der SHA wird am Ende der Pipeline automatisch in `deployment/values.yaml` eingetragen und committed
+- Dadurch ist jedes laufende Image eindeutig einem Commit zuzuordnen und ArgoCD erkennt jede Änderung zuverlässig
+- Zusätzlich wird das Tag `latest` für den jeweils neuesten Stand gepflegt
 
 ### Umgang mit Secrets
-TODO
+- Keine Credentials sind im Repository gespeichert
+- Das `GITHUB_TOKEN` wird von GitHub Actions automatisch bereitgestellt und ist nur während der Pipeline Laufzeit verfügbar -> kein manuelles Secret nötig
+- Die GHCR Registry ist für öffentliche Images konfiguriert, daher ist kein `imagePullSecret` im Kubernetes Cluster notwendig
+- Das initiale ArgoCD Admin Passwort liegt als Kubernetes Secret (`argocd-initial-admin-secret`) im Cluster, ist aber nicht im Repository vorhanden, das Auslesen setzt Cluster Zugriff voraus
 
 ## Aufgabenpaket 5 (Rollback und Supply Chain)
 
 ### Rollback
-- Ein Rollback kann über ArgoCD durchgeführt werden, indem eine frühere Revision ausgewählt und erneut deployed wird
+- Ein Rollback kann über ArgoCD durchgeführt werden, indem eine frühere Version ausgewählt und erneut deployed wird
 
-### Supply Chain
-TODO
+### Vorschlag zur Absicherung der Supply Chain
+- Nicht implementiert
+- Automatisches Image-Scanning (z. B. mit Trivy)
+    - Das fertige Docker Image wird direkt in der GitHub Action vor dem Push auf bekannte Sicherheitslücken und Viren untersucht
+    - Verhindert, dass unsichere Bibliotheken in den Cluster deployed werden
+- Erstellung einer Software Stückliste (SBOM)
+    - Automatische Generierung einer Liste aller in der Flask-App installierten Pakete
+    - Volle Transparenz darüber, was sich im Container befindet
+- Digitale Image-Signierung (z. B. mit Cosign)
+    - Die Pipeline versieht das überprüfte Image mit einem digitalen, kryptografischen Siegel
+    - Das Kubernetes Cluster startet die App nur, wenn das Siegel echt ist -> Schutz vor manipulierten Images
+- Orientierung an Standards
+    - [Offizielle Best Practices der CNCF (Cloud Native Computing Foundation)](https://tag-security.cncf.io/community/resources/security-whitepaper/v1/secure-software-factory/)
+    - [Richtlinie TR-03183 des BSI](https://www.bsi.bund.de/DE/Service-Navi/Presse/Alle-Meldungen-News/Meldungen/TR-03183-2-SBOM-Anforderungen.html)
 
 
 # Einzelne Einrichtungs- und Installationsschritte
@@ -155,7 +272,7 @@ TODO
 
 
 ## Kubernetes
-- Für Kubernetes wird Docker Desktop Kubernetes verwendet, dabei wird durch Docker Desktop, welches ich ohnehin bereits nutze, ein lokales Kubernetes Cluster auf dem Rechner mit einem Note auf gesetzt
+- Für Kubernetes wird Docker Desktop Kubernetes verwendet, dabei wird durch Docker Desktop, welches ich ohnehin bereits nutze, ein lokales Kubernetes Cluster auf dem Rechner mit einem Node auf gesetzt
 
 
 ## ArgoCD
@@ -180,15 +297,11 @@ TODO
 - `yml` Datei für den Workflow in `.github/workflows` anlegen
 
 
-TODO
-kubectl port-forward svc/flask-app 5000:5000 -n flask-app
-
-
 # Problem: Image Tag bei der Pipeline
-- Ich hatte zunächst den Tag latest in die Helm Values geschrieben und dann das Problem, dass ArgoCD keinen neuen Pod deployed hat, wenn ich etwas in der Flask Anwendung angepasst hatte
-- Dies lag daran, dass ArgoCD scheinbar nur auf geänderte Helm Values reagiert und dementsprechden der Tag angepasst werden muss
-- Den Tag aktuallisiere ich jetzt immer im letzten Pipeline Schritt mit dem eindeutigen Commit SHA (Simple Hashing Algorithm), damit ArgoCD bei jedem Commit einen neune Pod baut
-- Es gäbe das Tool ArgoCD Image Updater, ich habe mich aber erstmal für die einfacherer Variante entschieden und Update das Image Tag in der Pipeline
+- Zunächst hatte ich `latest` als Image Tag in den Helm Values gesetzt, ArgoCD hat daraufhin keine neuen Pods ausgerollt, obwohl sich die Flask Anwendung geändert hatte
+- Der Grund: ArgoCD erkennt nur Änderungen in den Helm Values und reagiert nicht auf ein neu gepushtes Image unter demselben Tag
+- Die Lösung war, den Tag im letzten Pipeline Schritt immer auf den aktuellen Commit SHA zu setzen, so sieht ArgoCD bei jedem Commit eine Änderung und deployed automatisch
+- Alternativ gäbe es den ArgoCD Image Updater, ich habe mich aber bewusst für die einfachere Pipeline Variante entschieden
 
 
 # Fazit
@@ -197,3 +310,4 @@ kubectl port-forward svc/flask-app 5000:5000 -n flask-app
 - Helm hatte ich bereits verwendet, jedoch habe ich vorher noch kein eigenes Helm Chart gebaut
 - Auch GitHub Actions war neu für mich, ich habe vorher einmal mit GitLab CI ein Pipeline gebaut, jedoch im Kontext eines Terraform States
 - Dementsprechend konnte ich meine Kenntinsse in den Technologien die ich bereits kannte vertiefen und auch neue Themen kennenleren
+- KI Tools (Claude) habe ich punktuell zur Validierung von Ideen, zur Unterstützung bei der Fehleranalyse sowie beim Verfeinern der Dokumentation eingesetzt, die technische Umsetzung basiert auf eigenem Wissen und eigener Recherche
