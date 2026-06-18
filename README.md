@@ -97,7 +97,7 @@ In diesem Abschnitt werden die Lösungen zu den Aufgabenpaketen angeben, im Absc
 - `kubectl get pods -n flask-app` -> Status der Pods prüfen
 - `kubectl logs <pod> -n flask-app` -> Logs analysieren
 - `kubectl describe deployment flask-app -n flask-app` -> Analyse des Deployments
-- `kubectl port-forward svc/flask-app 5000:5000 -n flask-app` → Zugriff auf den Health-Endpoint unter `http://127.0.0.1:5000/healthz`
+- `kubectl port-forward svc/flask-app 5000:5000 -n flask-app` -> Zugriff auf den Health-Endpoint unter `http://127.0.0.1:5000/healthz`
 - ArgoCD UI: Status "Synced" und "Healthy"
 
 
